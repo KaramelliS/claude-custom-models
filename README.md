@@ -1,6 +1,6 @@
 # claude-custom-models
 
-[![test](https://github.com/USER/claude-custom-models/actions/workflows/test.yml/badge.svg)](https://github.com/USER/claude-custom-models/actions/workflows/test.yml)
+[![test](https://github.com/KaramelliS/claude-custom-models/actions/workflows/test.yml/badge.svg)](https://github.com/KaramelliS/claude-custom-models/actions/workflows/test.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Run any LLM inside Claude Desktop** — DeepSeek, Qwen, GPT, Grok, Llama, or your own local model — with custom model names showing up directly in the app's model picker.
@@ -22,7 +22,7 @@ local proxy  ── OpenAI format ───────▶ │  DeepSeek · Open
 ## Quick start
 
 ```bash
-git clone https://github.com/<you>/claude-custom-models
+git clone https://github.com/KaramelliS/claude-custom-models
 cd claude-custom-models
 npm install
 
