@@ -44,6 +44,8 @@ function anthropicError(res, status, message, type = "api_error") {
   json(res, status, { type: "error", error: { type, message } });
 }
 
+const UPSTREAM_TIMEOUT_MS = 120_000;
+
 function upstreamRequest(target, headers, body, onResponse) {
   const mod = target.protocol === "https:" ? https : http;
   const req = mod.request(
@@ -53,9 +55,11 @@ function upstreamRequest(target, headers, body, onResponse) {
       port: target.port || (target.protocol === "https:" ? 443 : 80),
       path: target.pathname + target.search,
       headers,
+      timeout: UPSTREAM_TIMEOUT_MS,
     },
     onResponse
   );
+  req.on("timeout", () => req.destroy(new Error("upstream timeout")));
   req.write(typeof body === "string" ? body : JSON.stringify(body));
   req.end();
   return req;
@@ -117,7 +121,7 @@ export function startProxy(configPath = DEFAULT_CONFIG_PATH) {
         // Pass-through: upstream already speaks the Messages API.
         const target = new URL("/v1/messages", upstream.baseUrl);
         log("-> upstream(anthropic)", target.href, "model:", anthReq.model);
-        const upReq = upstreamRequest(
+        const passthroughReq = upstreamRequest(
           target,
           {
             "Content-Type": "application/json",
@@ -132,9 +136,15 @@ export function startProxy(configPath = DEFAULT_CONFIG_PATH) {
             upRes.pipe(res);
           }
         );
-        upReq.on("error", (e) => anthropicError(res, 502, e.message));
+        res.on("close", () => { if (!res.writableEnded) passthroughReq.destroy(); });
+        passthroughReq.on("error", (e) => anthropicError(res, 502, e.message));
         return;
       }
+
+      // Abort the upstream request if the desktop client goes away
+      // (response closed before we finished writing).
+      let upReq = null;
+      res.on("close", () => { if (!res.writableEnded) upReq?.destroy(); });
 
       // OpenAI-compatible upstream
       const outReq = anthropicToOpenaiRequest({
@@ -144,7 +154,7 @@ export function startProxy(configPath = DEFAULT_CONFIG_PATH) {
       const target = new URL(upstream.chatPath, upstream.baseUrl);
       log("-> upstream(openai)", target.href, "model:", outReq.model, "stream:", outReq.stream);
 
-      const upReq = upstreamRequest(
+      upReq = upstreamRequest(
         target,
         { "Content-Type": "application/json", Authorization: `Bearer ${upstream.apiKey}` },
         outReq,

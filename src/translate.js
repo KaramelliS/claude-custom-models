@@ -60,6 +60,7 @@ export function anthropicToOpenaiRequest(body) {
   }
 
   const out = { model: body.model, messages, stream: !!body.stream };
+  if (out.stream) out.stream_options = { include_usage: true }; // real token metrics
   if (body.max_tokens != null) out.max_tokens = body.max_tokens;
   if (body.temperature != null) out.temperature = body.temperature;
   if (body.top_p != null) out.top_p = body.top_p;
@@ -92,6 +93,9 @@ export function anthropicToOpenaiRequest(body) {
 export function openaiToAnthropicResponse(data, model) {
   const choice = data.choices?.[0] ?? {};
   const content = [];
+  // DeepSeek-R1 style reasoning -> Anthropic thinking block
+  const reasoning = choice.message?.reasoning_content;
+  if (reasoning) content.push({ type: "thinking", thinking: reasoning, signature: "" });
   const text = choice.message?.content;
   if (text) content.push({ type: "text", text });
   for (const tc of choice.message?.tool_calls || []) {
@@ -127,9 +131,10 @@ function mapStopReason(reason, content = []) {
 // ---------------------------------------------------------------------------
 export function createStreamTranslator(model) {
   let buffer = "";
-  let textBlockOpen = false;
+  let openBlock = null; // "thinking" | "text" | null
   let nextIndex = 0;
   let stopReason = null;
+  let usage = null;
   const toolBlocks = new Map(); // openai tool_call index -> {anthropicIndex, name, id}
 
   const frames = [];
@@ -149,27 +154,41 @@ export function createStreamTranslator(model) {
     },
   });
 
-  function closeTextBlock() {
-    if (!textBlockOpen) return;
+  function closeBlock() {
+    if (!openBlock) return;
     push("content_block_stop", { type: "content_block_stop", index: nextIndex });
     nextIndex++;
-    textBlockOpen = false;
+    openBlock = null;
+  }
+
+  function openBlockOf(type, contentBlock) {
+    if (openBlock === type) return;
+    closeBlock();
+    push("content_block_start", {
+      type: "content_block_start",
+      index: nextIndex,
+      content_block: contentBlock,
+    });
+    openBlock = type;
   }
 
   function handleChunk(chunk) {
+    if (chunk.usage) usage = chunk.usage; // final chunk when include_usage is on
     const choice = chunk.choices?.[0];
     if (!choice) return;
     const delta = choice.delta || {};
 
+    if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+      openBlockOf("thinking", { type: "thinking", thinking: "", signature: "" });
+      push("content_block_delta", {
+        type: "content_block_delta",
+        index: nextIndex,
+        delta: { type: "thinking_delta", thinking: delta.reasoning_content },
+      });
+    }
+
     if (typeof delta.content === "string" && delta.content) {
-      if (!textBlockOpen) {
-        push("content_block_start", {
-          type: "content_block_start",
-          index: nextIndex,
-          content_block: { type: "text", text: "" },
-        });
-        textBlockOpen = true;
-      }
+      openBlockOf("text", { type: "text", text: "" });
       push("content_block_delta", {
         type: "content_block_delta",
         index: nextIndex,
@@ -180,7 +199,7 @@ export function createStreamTranslator(model) {
     for (const tc of delta.tool_calls || []) {
       const key = tc.index ?? 0;
       if (!toolBlocks.has(key)) {
-        closeTextBlock();
+        closeBlock();
         const block = {
           anthropicIndex: nextIndex,
           id: tc.id || `toolu_${Date.now()}_${key}`,
@@ -226,7 +245,7 @@ export function createStreamTranslator(model) {
     },
     /** Flush remaining frames + emit the closing event sequence. */
     finish() {
-      closeTextBlock();
+      closeBlock();
       for (const block of toolBlocks.values()) {
         push("content_block_stop", { type: "content_block_stop", index: block.anthropicIndex });
       }
@@ -234,7 +253,10 @@ export function createStreamTranslator(model) {
       push("message_delta", {
         type: "message_delta",
         delta: { stop_reason: mapStopReason(stopReason, content), stop_sequence: null },
-        usage: { output_tokens: 0 },
+        usage: {
+          output_tokens: usage?.completion_tokens ?? 0,
+          input_tokens: usage?.prompt_tokens ?? 0,
+        },
       });
       push("message_stop", { type: "message_stop" });
       return frames.splice(0);

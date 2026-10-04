@@ -111,6 +111,86 @@ async function cmdRun() {
   console.log(c.green("✔ Patched Claude Desktop launched (proxy keeps running here)"));
 }
 
+async function cmdDoctor() {
+  const { createHash } = await import("node:crypto");
+  let failures = 0;
+  const check = (ok, label, hint) => {
+    console.log(`${ok ? c.green("✔") : (failures++, c.red("✖"))} ${label}${!ok && hint ? c.dim(` — ${hint}`) : ""}`);
+    return ok;
+  };
+
+  console.log(c.bold("\nDiagnostic\n"));
+
+  const install = findInstallDir();
+  check(!!install, `Claude Desktop install${install ? c.dim(` (${install})`) : ""}`, "not found");
+
+  const exe = path.join(DEFAULT_OUTPUT, "claude.exe");
+  const patched = fs.existsSync(exe);
+  check(patched, "Patched app exists", "run: patch");
+
+  if (patched) {
+    const asar = fs.readFileSync(path.join(DEFAULT_OUTPUT, "resources", "app.asar"));
+    const jsonLen = asar.readUInt32LE(12);
+    const headerHash = createHash("sha256").update(asar.subarray(16, 16 + jsonLen)).digest("hex");
+    const exeBuf = fs.readFileSync(exe).toString("latin1");
+    check(exeBuf.includes(headerHash), "Asar integrity hash matches patched executable",
+      "re-run: patch");
+    const src = asar.toString("latin1");
+    const stillPatched = /function [A-Za-z_$][\w$]*\(e\)\{return!0\}/.test(src);
+    check(stillPatched, "Model-name validator is neutralized", "re-run: patch");
+  }
+
+  if (check(fs.existsSync(CONFIG_PATH), "Proxy config exists", "run: configure")) {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    check(cfg.upstream?.apiKey && !/BURAYA|YOUR|\.\.\./i.test(cfg.upstream.apiKey),
+      "Upstream API key looks real", `edit ${CONFIG_PATH}`);
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${cfg.port ?? 8317}/health`, { signal: AbortSignal.timeout(2000) });
+      check(res.ok, "Proxy is running");
+    } catch {
+      check(false, "Proxy is running", "run: proxy (or: run)");
+    }
+
+    // upstream auth probe (1 token)
+    try {
+      const target = new URL(cfg.upstream.chatPath ?? "/v1/chat/completions", cfg.upstream.baseUrl);
+      const probe = await fetch(target, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.upstream.apiKey}` },
+        body: JSON.stringify({ model: cfg.models?.[0]?.upstream_model || cfg.models?.[0]?.id, max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+        signal: AbortSignal.timeout(15000),
+      });
+      check(probe.ok, `Upstream accepts the key (HTTP ${probe.status})`, "check baseUrl/apiKey");
+    } catch (e) {
+      check(false, "Upstream reachable", e.message);
+    }
+  }
+
+  console.log(failures ? c.red(`\n${failures} problem(s) found.`) : c.green("\nEverything looks healthy."));
+  process.exitCode = failures ? 1 : 0;
+}
+
+async function cmdInstallStartup() {
+  if (process.platform !== "win32") {
+    console.error(c.red("install-startup is Windows-only for now (PRs welcome)."));
+    process.exit(1);
+  }
+  // Hidden launcher so no console window pops up at logon.
+  const vbs = path.join(ROOT, "run-hidden.vbs");
+  const cli = path.join(ROOT, "bin", "cli.js");
+  fs.writeFileSync(vbs,
+    `CreateObject("Wscript.Shell").Run "node """ & "${cli}" & """ run", 0, False\n`);
+  const { execFileSync } = await import("node:child_process");
+  execFileSync("reg", [
+    "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "/v", "ClaudeCustomModels", "/t", "REG_SZ",
+    "/d", `wscript.exe "${vbs}"`, "/f",
+  ]);
+  console.log(c.green("✔ Auto-start installed (proxy + patched app launch at logon)"));
+  console.log(c.dim("  Remove with: reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v ClaudeCustomModels"));
+}
+
 async function cmdStatus() {
   console.log(`Install dir : ${findInstallDir() ?? c.red("not found")}`);
   console.log(`User data   : ${findUserDataDir()}`);
@@ -133,6 +213,9 @@ Usage: claude-custom-models <command>
   ${c.bold("configure")}  Set up upstream API + model list (interactive)
   ${c.bold("proxy")}      Start the translation proxy only
   ${c.bold("run")}        Start proxy + launch the patched app
+  ${c.bold("doctor")}     End-to-end health check (patch, config, proxy, upstream key)
+  ${c.bold("install-startup")}
+              Launch proxy + patched app automatically at logon (Windows)
   ${c.bold("status")}     Show what's set up
 `;
 
@@ -149,6 +232,8 @@ async function main() {
       case "proxy": return await cmdProxy();
       case "run": return await cmdRun();
       case "status": return await cmdStatus();
+      case "doctor": return await cmdDoctor();
+      case "install-startup": return await cmdInstallStartup();
       default: console.log(USAGE);
     }
   } catch (e) {

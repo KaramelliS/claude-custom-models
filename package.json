@@ -15,7 +15,9 @@
     "patch": "node bin/cli.js patch",
     "configure": "node bin/cli.js configure",
     "proxy": "node bin/cli.js proxy",
-    "run": "node bin/cli.js run"
+    "run": "node bin/cli.js run",
+    "doctor": "node bin/cli.js doctor",
+    "test": "node test/e2e.test.js"
   },
   "devDependencies": {
     "@electron/asar": "^3.2.0"

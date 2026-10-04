@@ -1,5 +1,8 @@
 # claude-custom-models
 
+[![test](https://github.com/USER/claude-custom-models/actions/workflows/test.yml/badge.svg)](https://github.com/USER/claude-custom-models/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Run any LLM inside Claude Desktop** — DeepSeek, Qwen, GPT, Grok, Llama, or your own local model — with custom model names showing up directly in the app's model picker.
 
 Claude Desktop (in custom-inference / "3p" deployment mode) officially supports pointing inference at a custom gateway… but its model-name validator silently rejects any name that isn't Claude-flavored (`deepseek`, `qwen`, `gpt`, `llama` and ~50 more are on a hard-coded denylist). This tool:
@@ -38,6 +41,8 @@ That's it. Open the patched app, pick `deepseek-chat` (or whatever you configure
 | `configure` | Asks for upstream base URL / key / model IDs, writes `proxy.config.json`, and points Claude Desktop's config library at the local proxy (with backup). |
 | `proxy` | Starts just the translation proxy. |
 | `run` | Starts the proxy and launches the patched app. |
+| `doctor` | End-to-end health check: install, patch integrity, proxy, upstream key. |
+| `install-startup` | Launch proxy + patched app automatically at logon (Windows). |
 | `status` | Shows what's installed / configured / running. |
 
 ## Proxy configuration (`proxy.config.json`)
@@ -67,6 +72,9 @@ The proxy re-reads the config on **every request** — edit and save, no restart
 
 - **Streaming** is fully translated (text deltas + streamed tool-call arguments).
 - **Tool use** is translated both ways (Anthropic `tools`/`tool_use`/`tool_result` ⇄ OpenAI `tools`/`tool_calls`).
+- **Reasoning models** (DeepSeek-R1 etc.): `reasoning_content` is mapped to Anthropic **thinking blocks** — you see the model think in the UI.
+- **Real usage metrics**: token counts flow through from the upstream (`stream_options.include_usage`).
+- **Robust**: upstream timeouts, client-disconnect aborts, config hot-reload on every request.
 - If your upstream already speaks the Anthropic Messages API, set `"format": "anthropic"` and the proxy passes requests through untouched (just swapping the base URL / key).
 
 ## How the patch works
