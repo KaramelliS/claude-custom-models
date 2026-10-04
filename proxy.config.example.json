@@ -1,0 +1,33 @@
+{
+  "port": 8317,
+  "upstream": {
+    "baseUrl": "https://api.deepseek.com",
+    "apiKey": "sk-...",
+    "format": "openai",
+    "chatPath": "/v1/chat/completions"
+  },
+  "models": [
+    { "id": "deepseek-chat", "display_name": "DeepSeek V3" },
+    { "id": "deepseek-reasoner", "display_name": "DeepSeek R1" },
+    {
+      "id": "qwen3-235b",
+      "display_name": "Qwen 3 235B",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode",
+      "api_key": "sk-...",
+      "upstream_model": "qwen3-235b-a22b"
+    },
+    {
+      "id": "gpt-5",
+      "display_name": "GPT-5",
+      "base_url": "https://api.openai.com",
+      "api_key": "sk-..."
+    },
+    {
+      "id": "my-local-model",
+      "display_name": "Local (Ollama)",
+      "base_url": "http://127.0.0.1:11434",
+      "chat_path": "/v1/chat/completions",
+      "api_key": "ollama"
+    }
+  ]
+}

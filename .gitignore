@@ -1,0 +1,4 @@
+node_modules/
+ClaudePatched/
+proxy.config.json
+*.log

@@ -1,0 +1,23 @@
+{
+  "name": "claude-custom-models",
+  "version": "1.0.0",
+  "description": "Run any LLM (DeepSeek, Qwen, GPT, local models...) inside Claude Desktop — local patcher + Anthropic↔OpenAI translation proxy",
+  "keywords": ["claude", "claude-desktop", "llm", "deepseek", "openai", "proxy", "patch"],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "claude-custom-models": "bin/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "patch": "node bin/cli.js patch",
+    "configure": "node bin/cli.js configure",
+    "proxy": "node bin/cli.js proxy",
+    "run": "node bin/cli.js run"
+  },
+  "devDependencies": {
+    "@electron/asar": "^3.2.0"
+  }
+}
