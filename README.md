@@ -84,6 +84,64 @@ The proxy re-reads the config on **every request** — edit and save, no restart
 - This Electron build has the **asar integrity fuse** enabled: the executable embeds the SHA-256 of the asar header. The patcher detects which byte range is hashed by reproducing the original hash first, then rewrites the embedded value in the *copied* executable.
 - The patched copy lives in `./ClaudePatched` — the MSIX install in `WindowsApps` is never touched, and Claude Desktop updates can't clobber your copy.
 
+## Research notes — how we got here
+
+Everything below was figured out by reading the minified bundles shipped in `resources/app.asar`. No source access, no docs — just `grep`, patience, and a hex viewer.
+
+### 1. The feature was already there
+
+Claude Desktop ships with a hidden enterprise configuration system. Buried in the bundle we found a full inference-provider abstraction with six backends:
+
+```
+gateway · anthropic · bedrock · mantle · vertex · foundry
+```
+
+plus ~40 managed config keys (`inferenceGatewayBaseUrl`, `inferenceModels`, `inferenceCustomHeaders`, …) readable from MDM profiles (macOS), GPO registry (`HKLM/HKCU\SOFTWARE\Policies\Claude`), `/etc/claude-desktop/managed-settings.json` (Linux), and a user-writable **config library** at `%LOCALAPPDATA%\Claude-3p\configLibrary\` — the same store the in-app Setup panel writes to. The `gateway` provider is exactly what we wanted: custom base URL + API key + a user-defined model list, speaking the standard Anthropic Messages API.
+
+The catch: it only activates in **"3p" deployment mode** (`Claude-3p` user-data dir, `deploymentMode: "3p"` in `claude_desktop_config.json`) — the mode you get when signing in with an API key instead of a claude.ai account.
+
+### 2. The model-name denylist
+
+The gateway validates every configured model name through a gate shaped like:
+
+```js
+function Ga(e){let t=e.toLowerCase();return r_e.test(t)?!1:t_e.test(t)||n_e.some((e=>t.includes(e)))}
+```
+
+where `r_e` is a hard-coded denylist of ~50 non-Anthropic model families:
+
+```
+/ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|
+ lfm|ling|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|
+ qianfan|qwen|tc-code|unic|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|
+ amazon.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|k2.|m2.|
+ jamba|arctic|solar|mercury|zamba|kat-coder|ds-|dpsk/
+```
+
+and the accept path requires the name to contain `claude`, `sonnet`, `opus`, `haiku`, `fable` or `mythos`. Two copies of this validator exist (main process + agent engine). The patcher finds them by **code shape**, not by identifier name — minified names rotate between builds, the shape doesn't — and replaces the body with `return true`.
+
+### 3. The asar integrity fuse
+
+After repacking, the app crashed with:
+
+```
+FATAL: asar_util.cc: Integrity check failed for asar archive entry '<header>'
+```
+
+This Electron build enables `EmbeddedAsarIntegrityValidation`: the executable embeds
+
+```json
+[{"file":"resources\\app.asar","alg":"SHA256","value":"<hex>"}]PADDINGXPADDINGX…
+```
+
+(the `PADDINGX` filler is deliberate — the region is sized for in-place rewriting at build time). Rewriting the hash is easy; knowing **which bytes** are hashed is not documented. We brute-forced it against the *original* pair (untouched exe + untouched asar): nested Chromium pickles mean the header JSON starts at offset 16 (`[u32=4][u32 headerPickleSize][u32 innerSize][u32 jsonLen][JSON…]`), and the hashed range turned out to be exactly the raw header-JSON bytes. The patcher auto-detects the layout by reproducing the original hash first — if a future Electron changes the layout, it fails loudly instead of shipping a broken binary.
+
+### 4. Other traps found along the way
+
+- **HTTPS enforcement**: the gateway base-URL schema rejects plain `http://` unless the host is loopback. If your upstream is a plain-HTTP router on a LAN/VPS, run the bundled proxy on `127.0.0.1` and point the app there.
+- **`WindowsApps` ACLs**: the MSIX install dir is read-only, so the patcher always works on a copy. Side effect: app updates never clobber your patched build.
+- **V8 compile cache**: the app ships `.jsc` bytecode caches — stale entries are rejected automatically on source mismatch, so no extra handling needed.
+
 ## Requirements
 
 - Node.js ≥ 18
